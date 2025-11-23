@@ -31,7 +31,7 @@ jobs:
       - name: Checkout kernel source repository
         uses: actions/checkout@v4
         with:
-          repository: 'NSR-Resources/android_kernel_xiaomi_lisa'
+          repository: 'Morrigan-Ship/android_kernel_xiaomi_lisa'
           fetch-depth: 1
           path: common
 
@@ -99,7 +99,7 @@ jobs:
           echo "DEFCONFIG=./common/arch/arm64/configs/lisa_defconfig" >> $GITHUB_ENV
           
           # Remove check_defconfig
-          sed -i 's/check_defconfig//' ./common/build.config.gki
+          #sed -i 's/check_defconfig//' ./common/build.config.gki
 
       - name: Configure Build Optimization
         run: |
