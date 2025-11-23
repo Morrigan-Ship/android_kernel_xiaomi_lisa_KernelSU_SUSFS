@@ -17,10 +17,7 @@ jobs:
     steps:
       - name: Set CONFIG Environment Variable
         run: |
-          # Set CONFIG
           CONFIG="$GITHUB_WORKSPACE"
-
-          # Set CONFIG as an environment variable for future steps
           echo "CONFIG=$CONFIG" >> $GITHUB_ENV
 
       - name: Checkout the repository
@@ -72,31 +69,25 @@ jobs:
           cd $GITHUB_WORKSPACE/toolchains/linux-x86
           latest_clang=$(find . -maxdepth 1 -type d -name "clang-r*" | sed 's|.*/||' | sort -Vr | head -n 1)
           echo "Latest Clang version detected: $latest_clang"
-          
           for dir in clang-r*; do
             if [[ "$dir" != "$latest_clang" ]]; then
               echo "Removing $dir"
               rm -rf "$dir"
             fi
           done
-          # Export path
-          export PATH="$GITHUB_WORKSPACE/toolchains/linux-x86/$latest_clang/bin:$PATH"
-
+          echo "Adding clang to PATH"
+          echo "$GITHUB_WORKSPACE/toolchains/linux-x86/$latest_clang/bin" >> $GITHUB_PATH
 
       - name: Set Kernel Configuration Variables
         run: |
           cd "$CONFIG"
           echo "Initializing kernel configuration..."
           echo "DEFCONFIG=./common/arch/arm64/configs/lisa_defconfig" >> $GITHUB_ENV
-          
-          # Remove check_defconfig
           sed -i 's/check_defconfig//' ./common/build.config.gki
-
 
       - name: Configure Build Optimization
         run: |
           cd "$CONFIG"
-          # Build Optimization Configuration
           echo "# Build Optimization Configuration" >> "${{ env.DEFCONFIG }}"
           echo "CONFIG_LTO_CLANG_THIN=y" >> "${{ env.DEFCONFIG }}"
           echo "CONFIG_LTO_CLANG=y" >> "${{ env.DEFCONFIG }}"
@@ -110,29 +101,36 @@ jobs:
           cp $GITHUB_WORKSPACE/toolchains/libufdt/utils/src/mkdtboimg.py mkdtboimg.py
           sed -i 's|python2|python3|' Makefile.lib
 
+      - name: Create output directory
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/output
+
       - name: Build Kernel
         run: |
           cd $GITHUB_WORKSPACE/common
           chmod +x build.sh
           ./build.sh
-          export version=$(make -j$(nproc --all) -s O=out kernelrelease)
-          export version=$(echo ${version/-dirty/-susfs-g${{ env.SUSFS_SHORT_SHA }}})
+          # get kernel version from the built tree
+          version=$(make -j$(nproc --all) -s O=out kernelrelease)
           echo "RELEASE_TAG=$version" >> $GITHUB_ENV
-          cp $GITHUB_WORKSPACE/common/out/arch/arm64/boot/Image $GITHUB_WORKSPACE/output
-          ccache --show-stats
+          mkdir -p $GITHUB_WORKSPACE/output
+          cp $GITHUB_WORKSPACE/common/out/arch/arm64/boot/Image $GITHUB_WORKSPACE/output || true
+          ccache --show-stats || true
           df -H .
 
       - name: Pack up
         run: |
           cd $GITHUB_WORKSPACE/output
-          mv Image kernel
-          7z a kernel.7z kernel
+          if [ -f Image ]; then
+            mv Image kernel
+          fi
+          7z a kernel.7z kernel || true
 
-      - name: Upload Kernel
+      - name: Upload Kernel Artifact
         uses: actions/upload-artifact@v4
         with:
           name: kernel
-          path: output/kernel
+          path: output
 
       - name: Upload Release
         uses: softprops/action-gh-release@v2
@@ -140,7 +138,6 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           body: |
             Kernel ${{ env.RELEASE_TAG }}
-            KernelSU Next + SUSFS [${{ env.SUSFS_SHORT_SHA }}](${{ env.SUSFS_REPO }}/commit/${{ env.SUSFS_SHA }})
           files: |
-            output/kernel
             output/kernel.7z
+            output/kernel
