@@ -1,0 +1,146 @@
+name: Build Kernel
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_HARDLINK: "true"
+
+    steps:
+      - name: Set CONFIG Environment Variable
+        run: |
+          # Set CONFIG
+          CONFIG="$GITHUB_WORKSPACE"
+
+          # Set CONFIG as an environment variable for future steps
+          echo "CONFIG=$CONFIG" >> $GITHUB_ENV
+
+      - name: Checkout the repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout kernel source repository
+        uses: actions/checkout@v4
+        with:
+          repository: 'NSR-Resources/android_kernel_xiaomi_lisa'
+          fetch-depth: 1
+          path: common
+
+      - name: Merge files
+        run: |
+          cd $GITHUB_WORKSPACE/common
+          find ../ -maxdepth 1 -type f -exec cp -v {} ./ \;
+
+      - name: Update and install required packages
+        run: |
+          sudo apt update
+          sudo apt install -y libc6-dev clang gcc-multilib flex bison libssl-dev bc python3 zip unzip lld llvm p7zip-full ccache jq
+
+      - name: Set up ccache
+        run: |
+          ccache --version
+          ccache --max-size=2G
+          ccache --set-config=compression=true
+          echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+
+      - name: Restore ccache from cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ github.sha }}
+          restore-keys: |
+            ccache-
+
+      - name: Prepare required toolchains
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/toolchains
+          cd $GITHUB_WORKSPACE/toolchains
+          git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --branch=main-kernel-build-2024 --depth=1
+          git clone https://android.googlesource.com/platform/system/libufdt --branch=main --depth=1
+
+      - name: Remove unnecessary tools
+        run: |
+          cd $GITHUB_WORKSPACE/toolchains/linux-x86
+          latest_clang=$(find . -maxdepth 1 -type d -name "clang-r*" | sed 's|.*/||' | sort -Vr | head -n 1)
+          echo "Latest Clang version detected: $latest_clang"
+          
+          for dir in clang-r*; do
+            if [[ "$dir" != "$latest_clang" ]]; then
+              echo "Removing $dir"
+              rm -rf "$dir"
+            fi
+          done
+          # Export path
+          export PATH="$GITHUB_WORKSPACE/toolchains/linux-x86/$latest_clang/bin:$PATH"
+
+
+      - name: Set Kernel Configuration Variables
+        run: |
+          cd "$CONFIG"
+          echo "Initializing kernel configuration..."
+          echo "DEFCONFIG=./common/arch/arm64/configs/lisa_defconfig" >> $GITHUB_ENV
+          
+          # Remove check_defconfig
+          sed -i 's/check_defconfig//' ./common/build.config.gki
+
+
+      - name: Configure Build Optimization
+        run: |
+          cd "$CONFIG"
+          # Build Optimization Configuration
+          echo "# Build Optimization Configuration" >> "${{ env.DEFCONFIG }}"
+          echo "CONFIG_LTO_CLANG_THIN=y" >> "${{ env.DEFCONFIG }}"
+          echo "CONFIG_LTO_CLANG=y" >> "${{ env.DEFCONFIG }}"
+          echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> "${{ env.DEFCONFIG }}"
+          echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3=n" >> "${{ env.DEFCONFIG }}"
+          echo "CONFIG_OPTIMIZE_INLINING=y" >> "${{ env.DEFCONFIG }}"
+
+      - name: Prepare Build
+        run: |
+          cd $GITHUB_WORKSPACE/common/scripts
+          cp $GITHUB_WORKSPACE/toolchains/libufdt/utils/src/mkdtboimg.py mkdtboimg.py
+          sed -i 's|python2|python3|' Makefile.lib
+
+      - name: Build Kernel
+        run: |
+          cd $GITHUB_WORKSPACE/common
+          chmod +x build.sh
+          ./build.sh
+          export version=$(make -j$(nproc --all) -s O=out kernelrelease)
+          export version=$(echo ${version/-dirty/-susfs-g${{ env.SUSFS_SHORT_SHA }}})
+          echo "RELEASE_TAG=$version" >> $GITHUB_ENV
+          cp $GITHUB_WORKSPACE/common/out/arch/arm64/boot/Image $GITHUB_WORKSPACE/output
+          ccache --show-stats
+          df -H .
+
+      - name: Pack up
+        run: |
+          cd $GITHUB_WORKSPACE/output
+          mv Image kernel
+          7z a kernel.7z kernel
+
+      - name: Upload Kernel
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel
+          path: output/kernel
+
+      - name: Upload Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          body: |
+            Kernel ${{ env.RELEASE_TAG }}
+            KernelSU Next + SUSFS [${{ env.SUSFS_SHORT_SHA }}](${{ env.SUSFS_REPO }}/commit/${{ env.SUSFS_SHA }})
+          files: |
+            output/kernel
+            output/kernel.7z
