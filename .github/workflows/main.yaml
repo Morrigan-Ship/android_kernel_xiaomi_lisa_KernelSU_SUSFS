@@ -29,12 +29,11 @@ jobs:
           fetch-depth: 1
 
       - name: Checkout kernel source repository
-        uses: actions/checkout@v4
-        with:
-          repository: 'git.codelinaro.org/clo/la/kernel/msm-5.4'
-          ref: 'LA.UM.9.16.r1-18400-MANNAR.QSSI15.0'
-          fetch-depth: 1
-          path: common
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/common
+          cd $GITHUB_WORKSPACE/common
+          git clone https://git.codelinaro.org/clo/la/kernel/msm-5.4.git .
+          git checkout LA.UM.9.16.r1-18400-MANNAR.QSSI15.0
 
       - name: Merge files
         run: |
