@@ -31,7 +31,8 @@ jobs:
       - name: Checkout kernel source repository
         uses: actions/checkout@v4
         with:
-          repository: 'Morrigan-Ship/android_kernel_xiaomi_lisa'
+          repository: 'git.codelinaro.org/clo/la/kernel/msm-5.4'
+          ref: 'LA.UM.9.16.r1-18400-MANNAR.QSSI15.0'
           fetch-depth: 1
           path: common
 
@@ -121,6 +122,7 @@ jobs:
       - name: Build Kernel
         run: |
           cd $GITHUB_WORKSPACE/common
+          curl -L https://raw.githubusercontent.com/Morrigan-Ship/android_kernel_xiaomi_lisa/refs/heads/lineage-23.0/arch/arm64/configs/lisa_defconfig -o ./arch/arm64/configs/lisa_defconfig
           chmod +x build.sh
           ./build.sh
           export version=$(make -j$(nproc --all) -s O=out kernelrelease)
